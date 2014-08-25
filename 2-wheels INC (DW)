@@ -1,0 +1,117 @@
+/*
+Name: 2-wheels INC Sales Summary 
+Database: AdventureWorksDW2008R2
+Desciption: This query returns a summary of all US sales grouped by zip code	
+Author: Joseph Gran
+Date: 08/24/14
+
+Notes:	Summary fields include
+			- # of distinct buyers
+			- Average transaction amount
+			- Total revenue
+			- Most popular product category
+*/		
+
+--
+-- Remove temp tables if they exist
+--
+IF OBJECT_ID('tempdb..#sales_detail_dw') IS NOT NULL
+drop table #sales_detail_dw	
+
+IF OBJECT_ID('tempdb..#summary_dw') IS NOT NULL
+drop table #summary_dw
+
+--
+-- Select detail level sales information
+--
+select	dg.PostalCode,
+		dr.ResellerKey as Customer,
+		frs.SalesOrderNumber,
+		frs.OrderDateKey,
+		frs.ProductKey,
+		frs.OrderQuantity,
+		frs.SalesAmount,
+		frs.SalesAmount + frs.TaxAmt + frs.Freight as [Purchase Amount]
+	into #sales_detail_dw
+	from DimReseller dr
+	inner join DimGeography dg on dr.GeographyKey = dg.GeographyKey
+	inner join FactResellerSales frs on dr.ResellerKey = frs.ResellerKey
+	where dg.CountryRegionCode = 'US'
+union all
+select	dg.PostalCode,
+		dc.CustomerKey,
+		fis.SalesOrderNumber,
+		fis.OrderDateKey,
+		fis.ProductKey,
+		fis.OrderQuantity,
+		fis.SalesAmount,
+		fis.SalesAmount + fis.TaxAmt + fis.Freight
+	from DimCustomer dc
+	inner join DimGeography dg on dc.GeographyKey = dg.GeographyKey
+	inner join FactInternetSales fis on dc.CustomerKey = fis.CustomerKey
+	where dg.CountryRegionCode = 'US'
+
+--
+-- Define the summary table.
+--  Caluclate all quantities that are grouped by zip code.
+--
+select	PostalCode,
+		--MIN(OrderDateKey) as [First Order]
+		--MAX(OrderDateKey) as [Last Order]
+		COUNT(distinct Customer) as [Distinct Buyers],
+		AVG(SalesAmount) as [Avg Line Amount],
+		SUM(SalesAmount) as [Total Line Amount],
+		CAST(0 as decimal(18,6)) as [Avg Payment per Order],
+		CAST(0 as decimal(18,6)) as [Total Payment Received],
+		CAST('' as varchar(50)) as [Popular Product Category]
+	into #summary_dw
+	from #sales_detail_dw
+	group by PostalCode
+
+
+--
+-- Get the Total and Avg Amounts per Order
+--
+update s
+	set [Avg Payment per Order] = [Total Avg],
+		[Total Payment Received] = [Total Sum]
+	--select AVG([AVG Order Price])
+	from #summary_dw s
+	inner join (
+		select	PostalCode,
+				AVG([Total Order Price]) as [Total Avg],
+				SUM([Total Order Price]) as [Total Sum]
+			from (
+				select	PostalCode,
+						SUM([Purchase Amount]) as [Total Order Price]
+					from #sales_detail_dw
+					group by PostalCode, SalesOrderNumber
+				) a
+			group by PostalCode
+		) o
+		on s.PostalCode = o.PostalCode
+	
+--
+--  Grab the most popular product category. (Ties are broken alphabetically by product name.)
+--		
+update s
+	set s.[Popular Product Category] = p.EnglishProductCategoryName
+	from #summary_dw s
+	cross apply (
+			select	top 1 sd.PostalCode,
+					dpc.EnglishProductCategoryName,
+					SUM(sd.OrderQuantity) as [Count]
+				from #sales_detail_dw sd
+				inner join DimProduct dp on sd.ProductKey = dp.ProductKey
+				inner join DimProductSubCategory dps on dp.ProductSubcategoryKey = dps.ProductSubcategoryKey
+				inner join DimProductCategory dpc on dps.ProductCategoryKey = dpc.ProductCategoryKey
+				where sd.PostalCode = s.PostalCode
+				group by sd.PostalCode, dpc.EnglishProductCategoryName
+				order by 1,3 desc, 2
+			) p
+				
+
+--
+-- Display Results
+--			
+select * from #summary_dw order by PostalCode

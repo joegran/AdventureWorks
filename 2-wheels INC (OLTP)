@@ -31,7 +31,7 @@ select	Add1.PostalCode,
 		sod.ProductID,
 		sod.OrderQty,
 		sod.LineTotal,
-		soh.TotalDue
+		soh.TotalDue  -- TotalDue is an order level detail, NOT a line level detail. Includes Taxes and Shipping.
 	into #sales_detail
 	from Sales.SalesOrderHeader soh
 	inner join Sales.SalesOrderDetail sod on soh.SalesOrderID = sod.SalesOrderID

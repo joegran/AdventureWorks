@@ -1,0 +1,103 @@
+/*
+Name: 2-wheels INC Sales Summary
+Database: AdventureWorks2008R2
+Desciption: This query returns a summary of all US sales grouped by zip code	
+Author: Joseph Gran
+Date: 08/24/14
+
+Notes:	Summary fields include
+			- # of distinct buyers
+			- Average transaction amount
+			- Total revenue
+			- Most popular product category
+*/
+
+--
+-- Remove temp tables if they exist
+--
+IF OBJECT_ID('tempdb..#sales_detail') IS NOT NULL
+drop table #sales_detail	
+
+IF OBJECT_ID('tempdb..#summary') IS NOT NULL
+drop table #summary
+
+
+--
+-- Select detail level sales information
+--
+select	Add1.PostalCode,
+		soh.SalesOrderID,
+		soh.CustomerID,
+		sod.ProductID,
+		sod.OrderQty,
+		sod.LineTotal,
+		soh.TotalDue
+	into #sales_detail
+	from Sales.SalesOrderHeader soh
+	inner join Sales.SalesOrderDetail sod on soh.SalesOrderID = sod.SalesOrderID
+	inner join Sales.SalesTerritory st on soh.TerritoryID = st.TerritoryID
+	inner join Person.Address Add1 on soh.BillToAddressID = Add1.AddressID
+	where st.CountryRegionCode = 'US'
+
+--
+-- Define the summary table.
+--  Caluclate all quantities that are grouped by zip code.
+--
+select	soh.PostalCode,
+		--MIN(soh.OrderDate) as [Min OrderDate],
+		--MAX(soh.OrderDate) as [Max OrderDate],
+		COUNT(distinct soh.CustomerID) as [Distinct Buyers],
+		AVG(soh.LineTotal) as [Avg Line Amount],
+		SUM(soh.LineTotal) as [Total Line Amount],
+		CAST(0 as decimal(18,6)) as [Avg Payment per Order],
+		CAST(0 as decimal(18,6)) as [Total Payment Received],
+		CAST('' as varchar(50)) as [Popular Product Category]
+	into #summary
+	from #sales_detail soh
+	group by soh.PostalCode
+
+--
+-- Get the Total and Avg Amounts per Order
+--
+update s
+	set s.[Avg Payment per Order] = Total.[Total Avg],
+		s.[Total Payment Received] = Total.[Total Sum]
+	from #summary s
+	inner join (
+			select	PostalCode, 
+					AVG(TotalDue) as [Total Avg],
+					SUM(TotalDue) as [Total Sum]
+				from (
+					select distinct PostalCode, SalesOrderId, TotalDue
+						from #sales_detail
+					) a
+				group by PostalCode
+			) Total
+		on s.PostalCode = Total.PostalCode
+
+--
+--  Grab the most popular product category. (Ties are broken alphabetically by product name.)
+--
+update s
+	set s.[popular product category] = p.Name
+	from #summary s  
+	inner join (
+			-- This could also be done with a cross apply to (select top 1 ... group by PostalCode, Name order by sum() desc)
+			select	sh.PostalCode,
+					pc.Name,
+					ROW_NUMBER() over ( partition by sh.PostalCode order by SUM(sh.OrderQty) desc, pc.Name) as [rank]
+				from #sales_detail sh
+				inner join Production.Product p on sh.ProductID = p.ProductID
+				inner join Production.ProductSubcategory ps on p.ProductSubcategoryID = ps.ProductSubcategoryID
+				inner join Production.ProductCategory pc on ps.ProductCategoryID = pc.ProductCategoryID
+				group by sh.PostalCode,
+						pc.Name
+			) p
+		on s.PostalCode = p.PostalCode
+		and p.[rank] = 1
+
+
+--
+-- Display Results
+--
+select * from #summary order by postalcode

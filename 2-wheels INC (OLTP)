@@ -68,6 +68,7 @@ update s
 					AVG(TotalDue) as [Total Avg],
 					SUM(TotalDue) as [Total Sum]
 				from (
+					-- Select Order level information to group by PostalCode
 					select distinct PostalCode, SalesOrderId, TotalDue
 						from #sales_detail
 					) a
